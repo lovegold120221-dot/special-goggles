@@ -2775,7 +2775,7 @@ function BeatriceAgent({
       }
 
       if (sessionRef.current) {
-        sendTextToLive(`${settings.userName} tapped the "${label}" button. FIRST — say "OK, I'll get that started right away" out loud. THEN immediately begin working. Do NOT ask "Should I go ahead?" — just do it. Keep talking and narrating your whole process while you work. Fill every second with speech.\n\n${prompt}\n\nGenerate this immediately with sample data included.`);
+        sendTurnToLive(`${settings.userName} tapped the "${label}" button. FIRST — say "OK, I'll get that started right away" out loud. THEN immediately begin working. Do NOT ask "Should I go ahead?" — just do it. Keep talking and narrating your whole process while you work. Fill every second with speech.\n\n${prompt}\n\nGenerate this immediately with sample data included.`);
       } else {
         setActiveTaskPage(prev => prev && prev.id === tid ? { ...prev, status: 'failed', result: 'The live audio session could not start, so I could not send this task to Beatrice.' } : prev);
         setTasks(p => p.map(t => t.id === tid ? { ...t, status: 'failed', result: 'Live audio session could not start.' } : t));
@@ -2930,6 +2930,15 @@ function BeatriceAgent({
     }
   };
 
+  const sendTurnToLive = (text: string) => {
+    if (sessionRef.current && typeof sessionRef.current.sendClientContent === 'function') {
+      sessionRef.current.sendClientContent({
+        turns: [{ role: 'user', parts: [{ text }] }],
+        turnComplete: true,
+      });
+    }
+  };
+
   const clearSilenceTimer = () => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
@@ -3068,7 +3077,7 @@ function BeatriceAgent({
         return `${name}: ${summary}`;
       }).join('; ');
 
-      sendTextToLive(`The tasks finished. Results: ${summaries}. Tell ${settings.userName} briefly and naturally what was accomplished — no technical jargon, just a normal colleague update.`);
+      sendTurnToLive(`The tasks finished. Results: ${summaries}. Tell ${settings.userName} briefly and naturally what was accomplished — no technical jargon, just a normal colleague update.`);
     }
   };
 
@@ -3077,7 +3086,7 @@ function BeatriceAgent({
     pendingToolConfirmRef.current = false;
     setShowToolConfirm(false);
     if (sessionRef.current) {
-      sendTextToLive(`The user cancelled the action. Acknowledge briefly and normally, then stop.`);
+      sendTurnToLive(`The user cancelled the action. Acknowledge briefly and normally, then stop.`);
     }
   };
 
@@ -3099,7 +3108,7 @@ function BeatriceAgent({
         // but it is not manually inserted into the visible conversation window.
         // The visible user/AI transcript is populated only from Gemini Live Audio
         // inputAudioTranscription/outputAudioTranscription events.
-        sendTextToLive(clean);
+        sendTurnToLive(clean);
       }
     } catch (err) {
       console.error('Could not send chat message to Live Audio:', err);
@@ -3996,7 +4005,7 @@ function BeatriceAgent({
       startMicVisualizer();
       
       setTimeout(() => {
-        sendTextToLive(buildResumePrompt(historyMsgs));
+        sendTurnToLive(buildResumePrompt(historyMsgs));
       }, 500);
       
     } catch (err) { 
@@ -4022,7 +4031,7 @@ function BeatriceAgent({
         setIsVideoEnabled(true);
         
         setTimeout(() => { 
-          sendTextToLive(`${settings.userName} just opened the camera. Notice it in a normal human way. Oh, yeah, I see it now. Briefly describe only what is actually visible.`); 
+          sendTurnToLive(`${settings.userName} just opened the camera. Notice it in a normal human way. Oh, yeah, I see it now. Briefly describe only what is actually visible.`); 
         }, 300);
         
         videoIntervalRef.current = setInterval(() => {
@@ -4060,7 +4069,7 @@ function BeatriceAgent({
       setIsVideoEnabled(false);
       
       setTimeout(() => { 
-        sendTextToLive(`${settings.userName} closed the camera. Acknowledge it normally and keep the conversation going.`); 
+        sendTurnToLive(`${settings.userName} closed the camera. Acknowledge it normally and keep the conversation going.`); 
       }, 150);
     }
   };
@@ -4079,7 +4088,7 @@ function BeatriceAgent({
         const base64Data = c.toDataURL('image/jpeg', 0.8).split(',')[1];
         
         if (base64Data) { 
-          sendTextToLive(`${settings.userName} captured this photo. Look at it and respond normally, briefly, and clearly.`); 
+          sendTurnToLive(`${settings.userName} captured this photo. Look at it and respond normally, briefly, and clearly.`); 
           sendVideoToLive(base64Data); 
           saveMessage('user', '[Sent Photo]'); 
         }
@@ -4108,7 +4117,7 @@ function BeatriceAgent({
           videoRef.current.play().catch(e => console.error('Video play err', e)); 
         }
         
-        sendTextToLive(`${settings.userName} switched the camera. Notice the new view normally and describe only what stands out.`);
+        sendTurnToLive(`${settings.userName} switched the camera. Notice the new view normally and describe only what stands out.`);
       } catch (e) { 
         console.error('Camera switch error:', e); 
       }
@@ -4155,12 +4164,12 @@ function BeatriceAgent({
             const description = result.text || "I can see there's an image here, but I couldn't make out the details clearly.";
 
             if (sessionRef.current) {
-              sendTextToLive(`${settings.userName} just uploaded an image named "${safeName}". Here is what I see: "${description}". Respond to ${settings.userName} about this image naturally, as if you just looked at it.`);
+              sendTurnToLive(`${settings.userName} just uploaded an image named "${safeName}". Here is what I see: "${description}". Respond to ${settings.userName} about this image naturally, as if you just looked at it.`);
             }
           } catch (err) {
             const fallback = `I see you shared an image (${safeName}), but I had trouble analyzing it clearly. Could you describe what's in it?`;
             if (sessionRef.current) {
-              sendTextToLive(`${fallback}`);
+              sendTurnToLive(`${fallback}`);
             }
           }
         };
@@ -4177,7 +4186,7 @@ function BeatriceAgent({
         });
         
         if (sessionRef.current) {
-          sendTextToLive(`${settings.userName} just handed you a text file named "${safeName}". Here are the contents:\n\n${text.slice(0, 10000)}\n\nRead this and acknowledge it.`);
+          sendTurnToLive(`${settings.userName} just handed you a text file named "${safeName}". Here are the contents:\n\n${text.slice(0, 10000)}\n\nRead this and acknowledge it.`);
         }
       };
       reader.readAsText(file);
@@ -4188,7 +4197,7 @@ function BeatriceAgent({
       });
       
       if (sessionRef.current) {
-        sendTextToLive(`${settings.userName} attached a file named "${safeName}" with type "${fileType}". Acknowledge it normally. Say you might need a specific tool to read this format if it's not text or an image.`);
+        sendTurnToLive(`${settings.userName} attached a file named "${safeName}" with type "${fileType}". Acknowledge it normally. Say you might need a specific tool to read this format if it's not text or an image.`);
       }
     }
   };
@@ -4313,21 +4322,21 @@ Tasks:
 
         const status = `Meeting minutes done. Tools completed: ${completedTools.join(', ')}.`;
         if (sessionRef.current) {
-          sendTextToLive(`${status}. Tell ${settings.userName} briefly and naturally what you just finished — keep it conversational, like a colleague reporting back.`);
+          sendTurnToLive(`${status}. Tell ${settings.userName} briefly and naturally what you just finished — keep it conversational, like a colleague reporting back.`);
         }
       } else if (response.text) {
         if (sessionRef.current) {
-          sendTextToLive(`I reviewed the meeting transcript but did not need to call any tools. Summary: ${response.text}. Tell ${settings.userName} this naturally.`);
+          sendTurnToLive(`I reviewed the meeting transcript but did not need to call any tools. Summary: ${response.text}. Tell ${settings.userName} this naturally.`);
         }
       } else {
         if (sessionRef.current) {
-          sendTextToLive(`I reviewed the meeting transcript but could not extract clear minutes or action items. Tell ${settings.userName} briefly and normally.`);
+          sendTurnToLive(`I reviewed the meeting transcript but could not extract clear minutes or action items. Tell ${settings.userName} briefly and normally.`);
         }
       }
     } catch (error) {
       console.error(error);
       if (sessionRef.current) {
-        sendTextToLive(`I had trouble processing the meeting transcript. Tell ${settings.userName} briefly that something went wrong, then stop.`);
+        sendTurnToLive(`I had trouble processing the meeting transcript. Tell ${settings.userName} briefly that something went wrong, then stop.`);
       }
     }
   };
@@ -4995,7 +5004,7 @@ Tasks:
                               await startSession();
                               await new Promise(resolve => setTimeout(resolve, 900));
                             }
-                            sendTextToLive(`${settings.userName} tapped the "${label}" button. FIRST — say "OK, I'll get that started right away" out loud. THEN immediately begin working. Do NOT ask "Should I go ahead?" — just do it. Keep talking and narrating your whole process while you work. Fill every second with speech.\n\n${prompt}\n\nGenerate this immediately with sample data included.`);
+                            sendTurnToLive(`${settings.userName} tapped the "${label}" button. FIRST — say "OK, I'll get that started right away" out loud. THEN immediately begin working. Do NOT ask "Should I go ahead?" — just do it. Keep talking and narrating your whole process while you work. Fill every second with speech.\n\n${prompt}\n\nGenerate this immediately with sample data included.`);
                           } catch (err) {
                             console.error(err);
                           }
