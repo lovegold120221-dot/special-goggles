@@ -4441,7 +4441,7 @@ Tasks:
               </div>
             </div>
 
-            <canvas ref={canvasRef} id="pro-canvas" style={{ display: 'none' }} />
+            <canvas ref={canvasRef} id="pro-canvas" className="hidden" />
 
             <script dangerouslySetInnerHTML={{ __html: `
               (function() {
@@ -4682,9 +4682,10 @@ Tasks:
                     )}
                     
                     {task.downloadData && task.downloadFilename && ( 
-                      <a 
-                        href={task.downloadData} 
-                        download={task.downloadFilename} 
+                      <a
+                        href={task.downloadData}
+                        download={task.downloadFilename}
+                        aria-label={`Download ${task.downloadFilename}`}
                         className="pointer-events-auto rounded-lg border border-lime-300/20 p-2 text-lime-200 hover:bg-lime-300/10"
                       >
                         <Download className="h-4 w-4" />
