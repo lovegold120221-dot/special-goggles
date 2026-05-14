@@ -1,0 +1,209 @@
+@import "tailwindcss";
+
+/* Eburon HTML reference adaptation */
+.eburon-mobile-stage {
+  background: #0f0f12;
+}
+@media (min-width: 520px) {
+  .eburon-mobile-stage {
+    max-width: 430px;
+    height: min(932px, calc(100dvh - 24px));
+    min-height: min(932px, calc(100dvh - 24px));
+    margin: 12px auto;
+    border: 8px solid #222;
+    border-radius: 40px;
+    box-shadow: 0 20px 50px rgba(0,0,0,.5);
+  }
+}
+.eburon-reference-header {
+  background: transparent !important;
+  border-bottom: 0 !important;
+}
+.eburon-mobile-stage main canvas + * { pointer-events: auto; }
+.eburon-mobile-stage main::-webkit-scrollbar,
+.eburon-mobile-stage .overflow-y-auto::-webkit-scrollbar { display: none; }
+
+/* Final screenshot-matching polish */
+.reference-icon-rail {
+  position: relative;
+  isolation: isolate;
+}
+.reference-icon-rail::before,
+.reference-icon-rail::after {
+  content: "";
+  position: absolute;
+  top: -16px;
+  bottom: -22px;
+  width: 58px;
+  z-index: 4;
+  pointer-events: none;
+}
+.reference-icon-rail::before {
+  left: -28px;
+  background: linear-gradient(90deg, #020203 0%, rgba(2,2,3,0.82) 38%, transparent 100%);
+}
+.reference-icon-rail::after {
+  right: -28px;
+  background: linear-gradient(270deg, #020203 0%, rgba(2,2,3,0.82) 38%, transparent 100%);
+}
+
+@media (max-width: 519px) {
+  .eburon-mobile-stage {
+    width: 100dvw;
+    min-height: 100dvh;
+  }
+}
+
+/* Native mobile-app polish */
+html,
+body,
+#root {
+  min-height: 100%;
+  background: #050506;
+  color-scheme: dark;
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  touch-action: manipulation;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.eburon-mobile-stage {
+  position: relative;
+  overflow: hidden;
+  min-height: 100svh;
+  background:
+    radial-gradient(circle at 50% 8%, rgba(79,70,229,0.18), transparent 34%),
+    radial-gradient(circle at 20% 90%, rgba(190,242,100,0.08), transparent 30%),
+    linear-gradient(180deg, #08080a 0%, #020203 100%);
+}
+
+.eburon-mobile-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255,255,255,0.08), transparent 16%, transparent 82%, rgba(0,0,0,0.45));
+  z-index: 0;
+}
+
+.eburon-mobile-stage > * {
+  position: relative;
+}
+
+/* Full-screen modal pages must escape the normal app flex flow.
+   The broad `.eburon-mobile-stage > * { position: relative; }` rule is used
+   for the background layers, but it can otherwise override Tailwind's `fixed`
+   class on direct children and push pages below the chat UI. */
+.eburon-mobile-stage > .eburon-fullscreen-page {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  min-height: 100dvh !important;
+  max-width: none !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+}
+
+
+@media (min-width: 520px) {
+  .eburon-mobile-stage {
+    max-width: 430px;
+    height: min(932px, calc(100dvh - 24px));
+    min-height: min(932px, calc(100dvh - 24px));
+    margin: 12px auto;
+    border: 9px solid #151517;
+    border-radius: 46px;
+    box-shadow:
+      0 28px 70px rgba(0,0,0,.58),
+      inset 0 0 0 1px rgba(255,255,255,0.06);
+  }
+}
+
+@media (max-width: 519px) {
+  .eburon-mobile-stage {
+    width: 100dvw;
+    min-height: 100svh;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+/* User-scrollable shortcut rails */
+.reference-icon-rail {
+  position: relative;
+  isolation: isolate;
+  mask-image: linear-gradient(90deg, transparent 0%, #000 13%, #000 87%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 13%, #000 87%, transparent 100%);
+}
+
+.reference-icon-row {
+  display: flex;
+  overflow-x: auto;
+  width: 100%;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.reference-icon-row::-webkit-scrollbar {
+  display: none;
+}
+
+.reference-icon-track {
+  display: flex;
+  width: max-content;
+  flex: 0 0 auto;
+  gap: 14px;
+}
+
+.reference-shortcut {
+  width: 62px;
+  flex: 0 0 62px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.reference-shortcut-icon {
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgba(255,255,255,0.13);
+  box-shadow:
+    0 13px 26px rgba(0,0,0,0.34),
+    inset 0 1px 0 rgba(255,255,255,0.18);
+}
+
+/* Chat scroll container with visible thin scrollbar */
+.chat-scroll-container {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.15) transparent;
+}
+.chat-scroll-container::-webkit-scrollbar {
+  width: 4px;
+}
+.chat-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 4px;
+}
+.chat-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.25);
+}
