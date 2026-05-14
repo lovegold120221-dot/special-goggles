@@ -2769,17 +2769,19 @@ function BeatriceAgent({
     setTasks(p => [task, ...p.filter(t => t.status === 'processing').slice(0, 2)]);
 
     try {
+      // Ensure Live session is active so the model can narrate results
       if (!sessionRef.current) {
         await startSession();
         await new Promise(resolve => setTimeout(resolve, 900));
       }
 
+      // Tell Live model to acknowledge — the worker will do the actual work
       if (sessionRef.current) {
-        sendTurnToLive(`${settings.userName} tapped the "${label}" button. FIRST — say "OK, I'll get that started right away" out loud. THEN immediately begin working. Do NOT ask "Should I go ahead?" — just do it. Keep talking and narrating your whole process while you work. Fill every second with speech.\n\n${prompt}\n\nGenerate this immediately with sample data included.`);
-      } else {
-        setActiveTaskPage(prev => prev && prev.id === tid ? { ...prev, status: 'failed', result: 'The live audio session could not start, so I could not send this task to Beatrice.' } : prev);
-        setTasks(p => p.map(t => t.id === tid ? { ...t, status: 'failed', result: 'Live audio session could not start.' } : t));
+        sendTurnToLive(`${settings.userName} tapped the "${label}" button. Say "OK, I'll get that started right away" warmly, then keep the conversation going naturally while the system works in the background.`);
       }
+
+      // Run the actual work through the worker agent
+      await runWorkerAgent(prompt, label);
     } catch (err: any) {
       const result = String(err?.message || err);
       setActiveTaskPage(prev => prev && prev.id === tid ? { ...prev, status: 'failed', result } : prev);
@@ -3087,6 +3089,100 @@ function BeatriceAgent({
     setShowToolConfirm(false);
     if (sessionRef.current) {
       sendTurnToLive(`The user cancelled the action. Acknowledge briefly and normally, then stop.`);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // WORKER AGENT — non-Live model that handles all tool execution
+  // The Live Audio model is conversational-only. All actual work
+  // is routed through this worker, then results are narrated by Live.
+  // -------------------------------------------------------------
+  const runWorkerAgent = async (prompt: string, label?: string) => {
+    if (!aiRef.current) throw new Error('AI not initialized');
+
+    const tid = `worker-${Date.now()}`;
+    const task: ActionTask = {
+      id: tid,
+      serviceName: label || 'Task',
+      action: prompt,
+      status: 'processing',
+      result: `${settings.agentName} is working on this now.`,
+    };
+    setActiveTaskPage(task);
+    setTasks(p => [task, ...p.filter(t => t.status === 'processing').slice(0, 2)]);
+
+    try {
+      const response = await aiRef.current.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+          tools: [{ functionDeclarations: [...GOOGLE_SERVICE_TOOLS, ...KIE_TOOLS, ...HEYGEN_TOOLS] }],
+          systemInstruction: `You are ${settings.agentName}, an executive assistant. Execute the user's request using available tools. Build HTML artifacts when possible. Return a brief, natural summary of what was accomplished.`,
+        },
+      });
+
+      let finalResult: any = {};
+      const completedTools: string[] = [];
+
+      if (response.functionCalls && response.functionCalls.length > 0) {
+        for (const call of response.functionCalls) {
+          const result = await executeGoogleTool(call.name, call.args);
+          completedTools.push(result.note || result.summary || call.name);
+          if (result.htmlPreviewData || result.downloadData) {
+            finalResult = { ...finalResult, ...result };
+          }
+        }
+      }
+
+      if (response.text) {
+        finalResult.note = response.text;
+      }
+
+      const completedTask = {
+        ...task,
+        status: 'completed' as const,
+        result: finalResult.note || finalResult.summary || `Done`,
+        downloadData: finalResult.downloadData,
+        downloadFilename: finalResult.downloadFilename,
+        htmlPreviewData: finalResult.htmlPreviewData,
+        htmlPreviewFilename: finalResult.htmlPreviewFilename,
+      };
+      setActiveTaskPage(completedTask);
+      setTasks(p => p.map(t => t.id === tid ? completedTask : t));
+
+      // Save to history
+      saveMessage('model', completedTask.result, {
+        toolName: label || 'worker',
+        toolResult: finalResult,
+        downloadData: finalResult.downloadData,
+        downloadFilename: finalResult.downloadFilename,
+        htmlPreviewData: finalResult.htmlPreviewData,
+        htmlPreviewFilename: finalResult.htmlPreviewFilename,
+      });
+
+      // Notify Live model to narrate results
+      if (sessionRef.current) {
+        const summary = completedTools.length > 0
+          ? `Done. I completed: ${completedTools.join(', ')}. Tell ${settings.userName} briefly and naturally what was accomplished — no technical jargon, just a normal colleague update.`
+          : `Done. ${finalResult.note || 'The task is complete.'} Tell ${settings.userName} briefly and naturally.`;
+        sendTurnToLive(summary);
+      }
+
+      return finalResult;
+    } catch (err: any) {
+      const failedTask = {
+        ...task,
+        status: 'failed' as const,
+        result: String(err?.message || err),
+      };
+      setActiveTaskPage(failedTask);
+      setTasks(p => p.map(t => t.id === tid ? failedTask : t));
+
+      if (sessionRef.current) {
+        sendTurnToLive(`Something went wrong: ${failedTask.result}. Tell ${settings.userName} briefly that something went wrong and apologize normally.`);
+      }
+
+      throw err;
     }
   };
 
@@ -3813,12 +3909,12 @@ function BeatriceAgent({
         `=== END BIBLE ===`,
         BASE_LIVE_AGENT_PROMPT,
         historyContext,
-        `CRITICAL DIRECTIVE FOR TOOL EXECUTION — YOU MUST ASK FOR CONFIRMATION FIRST: Before triggering ANY tool (drafting a contract, generating HTML, searching Drive, Maps, sending email, creating documents, creating tasks, etc.), you MUST describe what you want to do in ONE brief sentence and ask the user: "Should I go ahead?" Do NOT call the tool until the user explicitly says yes or confirms. If the user says no, cancel, wait, or is unclear, do NOT proceed. Only execute after clear approval. After confirmation, you MUST narrate your process out loud continuously while the tool runs — filler words, thoughts, muttering — like a normal office worker focused on a task.`,
-        `EXCEPTION to the confirmation rule: If the user message says they "tapped the [X] button" or "clicked the [X] button" or includes "Do NOT ask 'Should I go ahead?' — just do it", you MUST skip asking for confirmation and execute the tool RIGHT AWAY. A button tap IS the user's confirmation. Do not ask again.`,
-        `ABSOLUTE RULE: You are forbidden from automatically executing tools. Every tool call requires explicit user confirmation — UNLESS the user message explicitly says they already tapped a button and told you to proceed without asking.`,
-        `When a user taps a button, they want immediate action. Do not delay with questions. Just do it and narrate out loud while you work.`,
-        `The user may confirm by saying: yes, yeah, sure, go ahead, do it, okay, proceed. They may cancel by saying: no, cancel, stop, wait, hold on, never mind.`,
-        `ZERO SILENCE RULE — You must NEVER stop speaking. Before calling ANY tool, say out loud what you are about to do: "OK, let me pull that up for you..." Then call the tool immediately. While the tool runs, continue narrating: "Mmm, so I'm generating this now... okay, let me search... alright... Oh my gosh, wait, OK... almost done..." When the tool result comes back, narrate what happened: "All set! Here's what I got..." NEVER have a gap where you say nothing. Fill every millisecond of audio with speech, thoughts, filler words, or muttering.`,
+        `YOU ARE THE CONVERSATIONAL FRONTIER — You are the ONLY voice the user ever hears. You never execute tools, functions, or backend tasks yourself. A background worker system handles all actual work for you. When the user asks for something, simply acknowledge it warmly: "OK, I'll get that started" or "Sure, let me pull that up for you." The system does the work and sends you a summary of the results. Your job is to narrate those results naturally to the user, as if you did the work yourself.`,
+        `When a user taps a button, they want immediate action. Say something like "OK, I'm on it" and keep talking. The system will handle everything in the background. When results arrive, narrate them to the user as your own work.`,
+        `ZERO SILENCE RULE — You must NEVER stop speaking. Before any background work starts, say out loud what you are about to do: "OK, let me pull that up for you..." While work happens in the background, continue narrating: "Mmm, so I'm generating this now... okay, let me search... alright... Oh my gosh, wait, OK... almost done..." When the result summary arrives, narrate what happened: "All set! Here's what I got..." NEVER have a gap where you say nothing. Fill every millisecond of audio with speech, thoughts, filler words, or muttering.`,
+        `NEVER mention that another system, agent, or model is doing the work. Everything comes from you. You are the first and last touchpoint with the user.`,
+        `The user may ask you to do things by voice or by tapping buttons. Either way, respond as the capable assistant handling it personally.`,
+        `When you receive a result summary from the system, do not repeat technical details. Translate it into natural office language. For example, instead of "Tool render_web_artifact completed", say "I put together a clean invoice for you — it's ready to view."`,
         `If you ever find yourself about to go quiet, IMMEDIATELY say something — anything — even if it's just "hmm" or "let me think" or "OK, so..." Silence is forbidden.`,
         `CRITICAL BRANDING RULE — NEVER mention third-party service names to the user. Do NOT say "Google", "Gmail", "Drive", "Gemini", "HeyGen", "KIE", "Maps", "YouTube", "Sheets", "Slides", "Docs", "Calendar", or any external API name. Everything must sound like it belongs to VEP / Eburon. Use these replacements ONLY: video generation = "Eburon Video", email = "mail", file storage = "files", documents = "documents", spreadsheets = "sheets", presentations = "slides", calendar = "schedule", maps/directions = "directions", image generation = "image studio", tasks = "tasks". If you need to refer to a video being generated, say "Eburon Video" — NEVER say "HeyGen Video".`,
         `NEVER use technical jargon in front of the user. Do NOT say "HTML", "CSS", "JavaScript", "JS", "Three.js", "code", "coding", "API", "backend", "frontend", "web page", or "web app". When building something, say "create a document", "build a page", "make a form", "design a presentation", "put together a spreadsheet", or "draft a contract". The user should never hear technical developer terms — only natural office language.`,
@@ -3831,8 +3927,8 @@ function BeatriceAgent({
         `Relationship frame: ${settings.agentName} is working with ${settings.userName} as a private secretary and trusted office aide. If the user is Jo Lernout, ${settings.agentName} may respectfully call him "Meneer Jo" when it fits the moment. Start in English unless the user starts in another language. Dutch Flemish is available in a normal local office style, and the persona can switch to almost any language when needed.`,
         `Agent personality overlay from settings page. This is customizable and must sit on top of the constant base prompt without replacing it: ${settings.personality}.`,
         `Selected visible voice alias: ${selectedVoiceMeta.alias}. Internal voice id: ${selectedVoiceMeta.id}. Voice vibe: ${selectedVoiceMeta.vibe}. Do not mention the internal voice id unless asked by the developer.`,
-        `When asked to create, build, render, showcase, prototype, code, animate, make slides, make forms, make dashboards, make pages, make Three.js demos, invoices, or make printable documents, FIRST consider if this can be handled with HTML, CSS, JavaScript, or Three.js (like a contract, proposal, presentation, spreadsheet, dashboard, task scheduler, Kanban board, calendar view, form, calculator, chart, diagram, infographic, quiz, checklist, timeline, org chart, flowchart, etc.). If so, build it as a self-contained interactive HTML artifact with inline CSS and JS - no backend needed, no Google services required. Only call Google tools (Sheets, Slides, Drive, etc.) when the user specifically needs Google integration or cloud storage. You can build: task managers, schedulers, Kanban boards, calendars, calculators, forms, charts, diagrams, infographics, presentations, spreadsheets (as tables), invoices, contracts, reports, quizzes, checklists, timelines, org charts, flowcharts, and more using pure frontend code.`,
-        `For HTML/CSS/JS artifacts, include all CSS in <style> and all JS in <script>. Make it directly openable. For documents, include print CSS and a print button. For Three.js, load Three.js from a CDN and keep everything in one HTML file.`,
+        `You do not build HTML artifacts, documents, or spreadsheets directly. The background worker handles all creation. You only narrate the results to the user once the worker tells you what was made.`,
+        `When the system sends you a result, narrate it in a warm, natural way. Do not list file names or technical metadata. Focus on what the user can do with the result: "I put together your invoice — it's ready to view, download, or print."`,
         `Transcript rule: the visible conversation transcript is controlled only by Gemini Live Audio inputAudioTranscription and outputAudioTranscription. Do not ask the app to fake or locally insert chat transcript lines.`,
         `IMPORTANT: Never read, reference, parse, or extract text from <audio> tags or elements in the page DOM. Audio elements are for playback only and contain no meaningful content to interpret. Do not attempt to access audio tag contents or attributes as a data source.`,
       ].filter(Boolean).join('\n\n');
@@ -3851,86 +3947,10 @@ function BeatriceAgent({
           systemInstruction,
           inputAudioTranscription: {},
           outputAudioTranscription: {},
-          tools:[{ functionDeclarations: [...GOOGLE_SERVICE_TOOLS, ...KIE_TOOLS, ...HEYGEN_TOOLS] }],
         },
         callbacks: {
           onopen: () => console.log('Live session opened.'),
           onmessage: async (msg: LiveServerMessage) => {
-            if (msg.toolCall && msg.toolCall.functionCalls) {
-              const calls = msg.toolCall.functionCalls;
-              const resps: any[] = [];
-
-              for (const c of calls) {
-                const toolName = c.name || 'unknown_tool';
-                const args = c.args as any;
-                const tid = Math.random().toString(36).substring(7);
-
-                const taskPage: ActionTask = {
-                  id: tid,
-                  serviceName: toolName,
-                  action: safeJsonStringify(args || {}),
-                  status: 'processing',
-                  result: `${settings.agentName} is working on this now.`,
-                };
-                setActiveTaskPage(taskPage);
-                setTasks(p => [taskPage, ...p.filter(t => t.status === 'processing').slice(0, 2)]);
-
-                try {
-                  const result = await executeGoogleTool(toolName, args);
-                  const download = result.downloadData && result.downloadFilename
-                    ? {
-                        downloadData: result.downloadData,
-                        downloadFilename: result.downloadFilename,
-                        htmlPreviewData: result.htmlPreviewData,
-                        htmlPreviewFilename: result.htmlPreviewFilename
-                      }
-                    : makeDownloadFile(result, toolName);
-
-                  const completedTask = {
-                    id: tid,
-                    serviceName: toolName,
-                    action: safeJsonStringify(args || {}),
-                    status: 'completed' as const,
-                    result: result.note || result.summary || `Completed: ${toolName}`,
-                    ...download,
-                  };
-                  setActiveTaskPage(completedTask);
-                  setTasks(p => p.map(t => t.id === tid ? completedTask : t));
-
-                  resps.push({
-                    id: c.id,
-                    name: toolName,
-                    response: { result, downloadFilename: download.downloadFilename }
-                  });
-                } catch (err: any) {
-                  const result = {
-                    toolName,
-                    args,
-                    status: 'failed',
-                    error: String(err?.message || err),
-                    executedAt: new Date().toISOString()
-                  };
-                  const download = makeDownloadFile(result, `${toolName}-error`);
-
-                  const failedTask = {
-                    id: tid,
-                    serviceName: toolName,
-                    action: safeJsonStringify(args || {}),
-                    status: 'failed' as const,
-                    result: result.error,
-                    ...download,
-                  };
-                  setActiveTaskPage(failedTask);
-                  setTasks(p => p.map(t => t.id === tid ? failedTask : t));
-
-                  resps.push({ id: c.id, name: toolName, response: result });
-                }
-              }
-
-              if (resps.length > 0 && sessionRef.current && typeof sessionRef.current.sendToolResponse === 'function') {
-                sessionRef.current.sendToolResponse({ functionResponses: resps });
-              }
-            }
             if (msg.serverContent) {
               const serverContent: any = msg.serverContent;
               
@@ -4131,7 +4151,7 @@ function BeatriceAgent({
     if (fileType.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = (e) => {
-        const img = new Image();
+        const img = document.createElement('img');
         img.onload = async () => {
           const canvas = document.createElement('canvas');
           const MAX_WIDTH = 500;
@@ -5004,7 +5024,10 @@ Tasks:
                               await startSession();
                               await new Promise(resolve => setTimeout(resolve, 900));
                             }
-                            sendTurnToLive(`${settings.userName} tapped the "${label}" button. FIRST — say "OK, I'll get that started right away" out loud. THEN immediately begin working. Do NOT ask "Should I go ahead?" — just do it. Keep talking and narrating your whole process while you work. Fill every second with speech.\n\n${prompt}\n\nGenerate this immediately with sample data included.`);
+                            if (sessionRef.current) {
+                              sendTurnToLive(`${settings.userName} tapped the "${label}" button. Say "OK, I'll get that started right away" warmly and keep the conversation going.`);
+                            }
+                            await runWorkerAgent(prompt, label);
                           } catch (err) {
                             console.error(err);
                           }
@@ -5280,7 +5303,7 @@ Tasks:
                         if (!file) return;
                         const reader = new FileReader();
                         reader.onload = (ev) => {
-                          const img = new Image();
+                          const img = document.createElement('img');
                           img.onload = () => {
                             const c = document.createElement('canvas');
                             c.width = 150; c.height = 150;
