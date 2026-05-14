@@ -3068,7 +3068,7 @@ function BeatriceAgent({
         return `${name}: ${summary}`;
       }).join('; ');
 
-      sendTextToLive(`[SYSTEM]: The user confirmed and the tasks finished. Results: ${summaries}. Tell ${settings.userName} briefly and naturally what was accomplished — no technical jargon, just a normal colleague update.`);
+      sendTextToLive(`The tasks finished. Results: ${summaries}. Tell ${settings.userName} briefly and naturally what was accomplished — no technical jargon, just a normal colleague update.`);
     }
   };
 
@@ -3077,7 +3077,7 @@ function BeatriceAgent({
     pendingToolConfirmRef.current = false;
     setShowToolConfirm(false);
     if (sessionRef.current) {
-      sendTextToLive(`[SYSTEM]: The user cancelled the action. Acknowledge briefly and normally, then stop.`);
+      sendTextToLive(`The user cancelled the action. Acknowledge briefly and normally, then stop.`);
     }
   };
 
@@ -4155,12 +4155,12 @@ function BeatriceAgent({
             const description = result.text || "I can see there's an image here, but I couldn't make out the details clearly.";
 
             if (sessionRef.current) {
-              sendTextToLive(`[SYSTEM NOTIFICATION]: The user just uploaded an image named "${safeName}". Here is the verified visual description: "${description}". Please respond to the user about this image naturally, as if you just looked at it.`);
+              sendTextToLive(`${settings.userName} just uploaded an image named "${safeName}". Here is what I see: "${description}". Respond to ${settings.userName} about this image naturally, as if you just looked at it.`);
             }
           } catch (err) {
             const fallback = `I see you shared an image (${safeName}), but I had trouble analyzing it clearly. Could you describe what's in it?`;
             if (sessionRef.current) {
-              sendTextToLive(`[SYSTEM NOTIFICATION]: ${fallback}`);
+              sendTextToLive(`${fallback}`);
             }
           }
         };
@@ -4313,21 +4313,21 @@ Tasks:
 
         const status = `Meeting minutes done. Tools completed: ${completedTools.join(', ')}.`;
         if (sessionRef.current) {
-          sendTextToLive(`[SYSTEM STATUS]: ${status}. Tell ${settings.userName} briefly and naturally what you just finished — keep it conversational, like a colleague reporting back.`);
+          sendTextToLive(`${status}. Tell ${settings.userName} briefly and naturally what you just finished — keep it conversational, like a colleague reporting back.`);
         }
       } else if (response.text) {
         if (sessionRef.current) {
-          sendTextToLive(`[SYSTEM STATUS]: I reviewed the meeting transcript but did not need to call any tools. Summary: ${response.text}. Tell ${settings.userName} this naturally.`);
+          sendTextToLive(`I reviewed the meeting transcript but did not need to call any tools. Summary: ${response.text}. Tell ${settings.userName} this naturally.`);
         }
       } else {
         if (sessionRef.current) {
-          sendTextToLive(`[SYSTEM STATUS]: I reviewed the meeting transcript but could not extract clear minutes or action items. Tell ${settings.userName} briefly and normally.`);
+          sendTextToLive(`I reviewed the meeting transcript but could not extract clear minutes or action items. Tell ${settings.userName} briefly and normally.`);
         }
       }
     } catch (error) {
       console.error(error);
       if (sessionRef.current) {
-        sendTextToLive(`[SYSTEM STATUS]: I had trouble processing the meeting transcript. Tell ${settings.userName} briefly that something went wrong, then stop.`);
+        sendTextToLive(`I had trouble processing the meeting transcript. Tell ${settings.userName} briefly that something went wrong, then stop.`);
       }
     }
   };
