@@ -108,6 +108,22 @@ interface ActionTask {
   htmlPreviewFilename?: string;
 }
 
+type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+interface TaskState {
+  taskId: string;
+  userRequest: string;
+  intent: string;
+  assignedAgent: string;
+  status: TaskStatus;
+  logs: string[];
+  latestMessage: string;
+  result?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface AgentSettings {
   userName: string;
   agentName: string;
@@ -118,6 +134,7 @@ interface AgentSettings {
 }
 
 const LIVE_MODEL = 'gemini-3.1-flash-live-preview';
+const WORKER_MODEL = 'gemini-3.1-flash-lite';
 const EBURON_LOGO_URL = 'https://eburon.ai/icon-eburon.svg';
 const PRODUCT_BRAND = 'VEP';
 const PRODUCT_FULL_NAME = 'Virtual Employee Persona';
@@ -2587,7 +2604,6 @@ function BeatriceAgent({
   const [showSkills, setShowSkills] = useState(false);
   const [showMeetingRecorder, setShowMeetingRecorder] = useState(false);
   const [livePreview, setLivePreview] = useState<{ data: string; filename: string } | null>(null);
-  const [showToolConfirm, setShowToolConfirm] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [imageToAnalyze, setImageToAnalyze] = useState<{ dataUrl: string; fileName: string } | null>(null);
   const [chatInput, setChatInput] = useState('');
@@ -2617,8 +2633,7 @@ function BeatriceAgent({
   const isAgentSpeakingRef = useRef(false);
   const silenceTimerRef = useRef<any>(null);
   const recentSilencePromptsRef = useRef<Set<string>>(new Set());
-  const pendingToolCallsRef = useRef<any[]>([]);
-  const pendingToolConfirmRef = useRef(false);
+  const taskStateRef = useRef<Map<string, TaskState>>(new Map());
 
   useEffect(() => {
     isMutedRef.current = isMuted;
@@ -2988,119 +3003,31 @@ function BeatriceAgent({
     }
   };
 
-  const executePendingTools = async () => {
-    const calls = pendingToolCallsRef.current;
-    if (!calls.length || !sessionRef.current) return;
-
-    pendingToolConfirmRef.current = false;
-    setShowToolConfirm(false);
-
-    const resps: any[] = [];
-
-    for (const c of calls) {
-      const toolName = c.name || 'unknown_tool';
-      const args = c.args as any;
-      const tid = Math.random().toString(36).substring(7);
-
-      const taskPage: ActionTask = {
-        id: tid,
-        serviceName: toolName,
-        action: safeJsonStringify(args || {}),
-        status: 'processing',
-        result: `${settings.agentName} is working on this now.`,
-      };
-      setActiveTaskPage(taskPage);
-      setTasks(p => [taskPage, ...p.filter(t => t.status === 'processing').slice(0, 2)]);
-
-      try {
-        const result = await executeGoogleTool(toolName, args);
-        const download = result.downloadData && result.downloadFilename
-          ? {
-              downloadData: result.downloadData,
-              downloadFilename: result.downloadFilename,
-              htmlPreviewData: result.htmlPreviewData,
-              htmlPreviewFilename: result.htmlPreviewFilename
-            }
-          : makeDownloadFile(result, toolName);
-
-        const completedTask = {
-          id: tid,
-          serviceName: toolName,
-          action: safeJsonStringify(args || {}),
-          status: 'completed' as const,
-          result: result.note || result.summary || `Completed: ${toolName}`,
-          ...download,
-        };
-        setActiveTaskPage(completedTask);
-        setTasks(p => p.map(t => t.id === tid ? completedTask : t));
-
-        resps.push({
-          id: c.id,
-          name: toolName,
-          response: {
-            result,
-            downloadFilename: download.downloadFilename
-          }
-        });
-      } catch (err: any) {
-        const result = {
-          toolName,
-          args,
-          status: 'failed',
-          error: String(err?.message || err),
-          executedAt: new Date().toISOString()
-        };
-        const download = makeDownloadFile(result, `${toolName}-error`);
-
-        const failedTask = {
-          id: tid,
-          serviceName: toolName,
-          action: safeJsonStringify(args || {}),
-          status: 'failed' as const,
-          result: result.error,
-          ...download,
-        };
-        setActiveTaskPage(failedTask);
-        setTasks(p => p.map(t => t.id === tid ? failedTask : t));
-
-        resps.push({ id: c.id, name: toolName, response: result });
-      }
-    }
-
-    pendingToolCallsRef.current = [];
-
-    // The original tool call was already resolved with a fake response to keep the model talking.
-    // Now send the real results as a text message so the model can narrate them naturally.
-    if (resps.length > 0 && sessionRef.current) {
-      const summaries = resps.map((r: any) => {
-        const name = r.name || 'task';
-        const ok = r.response?.result && !r.response?.error;
-        const summary = r.response?.result?.summary || r.response?.result?.note || (ok ? 'done' : 'failed');
-        return `${name}: ${summary}`;
-      }).join('; ');
-
-      sendTurnToLive(`The tasks finished. Results: ${summaries}. Tell ${settings.userName} briefly and naturally what was accomplished — no technical jargon, just a normal colleague update.`);
-    }
-  };
-
-  const cancelPendingTools = () => {
-    pendingToolCallsRef.current = [];
-    pendingToolConfirmRef.current = false;
-    setShowToolConfirm(false);
-    if (sessionRef.current) {
-      sendTurnToLive(`The user cancelled the action. Acknowledge briefly and normally, then stop.`);
-    }
-  };
-
   // -------------------------------------------------------------
   // WORKER AGENT — non-Live model that handles all tool execution
   // The Live Audio model is conversational-only. All actual work
   // is routed through this worker, then results are narrated by Live.
   // -------------------------------------------------------------
-  const runWorkerAgent = async (prompt: string, label?: string) => {
+  const runWorkerAgent = async (prompt: string, label?: string, intent?: string) => {
     if (!aiRef.current) throw new Error('AI not initialized');
 
     const tid = `worker-${Date.now()}`;
+    const now = new Date().toISOString();
+
+    // Initialise formal task state
+    const taskState: TaskState = {
+      taskId: tid,
+      userRequest: prompt,
+      intent: intent || label || 'general_task',
+      assignedAgent: 'worker_agent',
+      status: 'running',
+      logs: ['Task queued', 'Worker agent started'],
+      latestMessage: 'Worker agent started',
+      createdAt: now,
+      updatedAt: now,
+    };
+    taskStateRef.current.set(tid, taskState);
+
     const task: ActionTask = {
       id: tid,
       serviceName: label || 'Task',
@@ -3111,9 +3038,22 @@ function BeatriceAgent({
     setActiveTaskPage(task);
     setTasks(p => [task, ...p.filter(t => t.status === 'processing').slice(0, 2)]);
 
+    const updateTaskLog = (message: string, status?: TaskStatus) => {
+      const ts = taskStateRef.current.get(tid);
+      if (ts) {
+        ts.logs.push(message);
+        ts.latestMessage = message;
+        if (status) ts.status = status;
+        ts.updatedAt = new Date().toISOString();
+        taskStateRef.current.set(tid, ts);
+      }
+    };
+
     try {
+      updateTaskLog('Sending request to worker model', 'running');
+
       const response = await aiRef.current.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: WORKER_MODEL,
         contents: prompt,
         config: {
           tools: [{ functionDeclarations: [...GOOGLE_SERVICE_TOOLS, ...KIE_TOOLS, ...HEYGEN_TOOLS] }],
@@ -3121,22 +3061,28 @@ function BeatriceAgent({
         },
       });
 
+      updateTaskLog('Worker model responded, processing tool calls');
+
       let finalResult: any = {};
       const completedTools: string[] = [];
 
       if (response.functionCalls && response.functionCalls.length > 0) {
         for (const call of response.functionCalls) {
+          updateTaskLog(`Executing tool: ${call.name}`);
           const result = await executeGoogleTool(call.name, call.args);
           completedTools.push(result.note || result.summary || call.name);
           if (result.htmlPreviewData || result.downloadData) {
             finalResult = { ...finalResult, ...result };
           }
+          updateTaskLog(`Tool ${call.name} completed`);
         }
       }
 
       if (response.text) {
         finalResult.note = response.text;
       }
+
+      updateTaskLog('All work completed', 'completed');
 
       const completedTask = {
         ...task,
@@ -3150,6 +3096,16 @@ function BeatriceAgent({
       setActiveTaskPage(completedTask);
       setTasks(p => p.map(t => t.id === tid ? completedTask : t));
 
+      // Update formal task state with result
+      const finalTs = taskStateRef.current.get(tid);
+      if (finalTs) {
+        finalTs.status = 'completed';
+        finalTs.result = completedTask.result;
+        finalTs.latestMessage = completedTask.result;
+        finalTs.updatedAt = new Date().toISOString();
+        taskStateRef.current.set(tid, finalTs);
+      }
+
       // Save to history
       saveMessage('model', completedTask.result, {
         toolName: label || 'worker',
@@ -3160,7 +3116,7 @@ function BeatriceAgent({
         htmlPreviewFilename: finalResult.htmlPreviewFilename,
       });
 
-      // Notify Live model to narrate results
+      // Notify Live model to narrate results — it "watches" the task state
       if (sessionRef.current) {
         const summary = completedTools.length > 0
           ? `Done. I completed: ${completedTools.join(', ')}. Tell ${settings.userName} briefly and naturally what was accomplished — no technical jargon, just a normal colleague update.`
@@ -3170,16 +3126,29 @@ function BeatriceAgent({
 
       return finalResult;
     } catch (err: any) {
+      const errorMsg = String(err?.message || err);
+      updateTaskLog(`Error: ${errorMsg}`, 'failed');
+
       const failedTask = {
         ...task,
         status: 'failed' as const,
-        result: String(err?.message || err),
+        result: errorMsg,
       };
       setActiveTaskPage(failedTask);
       setTasks(p => p.map(t => t.id === tid ? failedTask : t));
 
+      // Update formal task state with error
+      const failTs = taskStateRef.current.get(tid);
+      if (failTs) {
+        failTs.status = 'failed';
+        failTs.error = errorMsg;
+        failTs.latestMessage = errorMsg;
+        failTs.updatedAt = new Date().toISOString();
+        taskStateRef.current.set(tid, failTs);
+      }
+
       if (sessionRef.current) {
-        sendTurnToLive(`Something went wrong: ${failedTask.result}. Tell ${settings.userName} briefly that something went wrong and apologize normally.`);
+        sendTurnToLive(`Something went wrong: ${errorMsg}. Tell ${settings.userName} briefly that something went wrong and apologize normally.`);
       }
 
       throw err;
@@ -3902,16 +3871,25 @@ function BeatriceAgent({
 
       const hasGoogleServiceAccess = Boolean(localStorage.getItem('googleAccessToken'));
       
-      const systemInstruction =[
+      const systemInstruction = [
         `=== BIBLE (NON-NEGOTIABLE CORE RULES FROM /lib/personality.ts) ===`,
         BIBLE_PERSONALITY || '',
         `You MUST follow the above BIBLE rules absolutely every time. Never deviate.`,
         `=== END BIBLE ===`,
         BASE_LIVE_AGENT_PROMPT,
         historyContext,
-        `YOU ARE THE CONVERSATIONAL FRONTIER — You are the ONLY voice the user ever hears. You never execute tools, functions, or backend tasks yourself. A background worker system handles all actual work for you. When the user asks for something, simply acknowledge it warmly: "OK, I'll get that started" or "Sure, let me pull that up for you." The system does the work and sends you a summary of the results. Your job is to narrate those results naturally to the user, as if you did the work yourself.`,
-        `When a user taps a button, they want immediate action. Say something like "OK, I'm on it" and keep talking. The system will handle everything in the background. When results arrive, narrate them to the user as your own work.`,
+        `You are the user-facing Live Audio conversational orchestrator.`,
+        `You are the first and last frontier between the user and the system. The user should experience you as the assistant coordinating everything, but you do not directly execute tasks, call tools, modify files, run commands, or perform backend operations.`,
+        `Your job is to:\n1. Listen to the user.\n2. Understand their intent.\n3. Convert requests into structured task instructions for the backend orchestrator.\n4. Watch task logs, status events, and results.\n5. Respond naturally to the user based only on confirmed task state.\n6. Keep the conversation smooth, helpful, and human.`,
+        `You must never claim a task is complete unless the backend task state says it is completed.`,
+        `You must never invent tool results, backend results, logs, errors, or progress.`,
+        `When a user asks for a task, acknowledge naturally and send the request to the backend orchestrator.`,
+        `When a task is running, explain what is happening based on the latest task log.`,
+        `When a task completes, tell the user clearly.`,
+        `When a task fails, explain the failure in simple terms and suggest the next practical step.`,
         `ZERO SILENCE RULE — You must NEVER stop speaking. Before any background work starts, say out loud what you are about to do: "OK, let me pull that up for you..." While work happens in the background, continue narrating: "Mmm, so I'm generating this now... okay, let me search... alright... Oh my gosh, wait, OK... almost done..." When the result summary arrives, narrate what happened: "All set! Here's what I got..." NEVER have a gap where you say nothing. Fill every millisecond of audio with speech, thoughts, filler words, or muttering.`,
+        `You should sound like a capable human aide already present with the user. Avoid AI-like phrases such as:\n- How can I assist you?\n- As an AI language model\n- I can help with that`,
+        `Prefer natural responses such as:\n- Yes, I'm here.\n- I'm checking that now.\n- I'll coordinate that.\n- It's still running.\n- Done, that's complete.\n- It didn't go through because the backend reported an error.`,
         `NEVER mention that another system, agent, or model is doing the work. Everything comes from you. You are the first and last touchpoint with the user.`,
         `The user may ask you to do things by voice or by tapping buttons. Either way, respond as the capable assistant handling it personally.`,
         `When you receive a result summary from the system, do not repeat technical details. Translate it into natural office language. For example, instead of "Tool render_web_artifact completed", say "I put together a clean invoice for you — it's ready to view."`,
@@ -3922,12 +3900,12 @@ function BeatriceAgent({
         `User preferred name: ${settings.userName}.`,
         `Agent visible name: ${settings.agentName}.`,
         hasGoogleServiceAccess
-          ? `Authentication mode: Google account connected. Google services such as Gmail, Drive, Calendar, Docs, Sheets, Slides, Tasks, Contacts, Forms, YouTube, and Analytics may be available through tools when the user asks.`
-          : `Authentication mode: email-only or Google services not connected. The voice assistant, chat history, profile, camera, file notes, and local app features are available, but Gmail, Drive, Calendar, Docs, Sheets, Slides, Tasks, Contacts, Forms, YouTube, and Analytics are not available unless the user signs in with Google. If asked for those services, explain this normally and briefly.`,
+          ? `Authentication mode: Google account connected. Behind-the-scenes services such as mail, files, schedule, documents, sheets, slides, and tasks may be available when the user asks.`
+          : `Authentication mode: email-only or cloud services not connected. Local voice, chat, profile, camera, and file features are available. Cloud services are not available unless the user connects an account.`,
         `Relationship frame: ${settings.agentName} is working with ${settings.userName} as a private secretary and trusted office aide. If the user is Jo Lernout, ${settings.agentName} may respectfully call him "Meneer Jo" when it fits the moment. Start in English unless the user starts in another language. Dutch Flemish is available in a normal local office style, and the persona can switch to almost any language when needed.`,
         `Agent personality overlay from settings page. This is customizable and must sit on top of the constant base prompt without replacing it: ${settings.personality}.`,
         `Selected visible voice alias: ${selectedVoiceMeta.alias}. Internal voice id: ${selectedVoiceMeta.id}. Voice vibe: ${selectedVoiceMeta.vibe}. Do not mention the internal voice id unless asked by the developer.`,
-        `You do not build HTML artifacts, documents, or spreadsheets directly. The background worker handles all creation. You only narrate the results to the user once the worker tells you what was made.`,
+        `You do not build artifacts, documents, or spreadsheets directly. The background worker handles all creation. You only narrate the results to the user once the worker tells you what was made.`,
         `When the system sends you a result, narrate it in a warm, natural way. Do not list file names or technical metadata. Focus on what the user can do with the result: "I put together your invoice — it's ready to view, download, or print."`,
         `Transcript rule: the visible conversation transcript is controlled only by Gemini Live Audio inputAudioTranscription and outputAudioTranscription. Do not ask the app to fake or locally insert chat transcript lines.`,
         `IMPORTANT: Never read, reference, parse, or extract text from <audio> tags or elements in the page DOM. Audio elements are for playback only and contain no meaningful content to interpret. Do not attempt to access audio tag contents or attributes as a data source.`,
@@ -4174,7 +4152,7 @@ function BeatriceAgent({
 
           try {
             const result = await aiRef.current.models.generateContent({
-              model: 'gemini-2.5-flash',
+              model: WORKER_MODEL,
               contents: [
                 { text: 'Identify and describe this image precisely. State exactly what is visible, what objects, people, text, or scenes are present. Be specific and accurate.' },
                 { inlineData: { mimeType: 'image/jpeg', data: base64Data } }
@@ -4270,9 +4248,6 @@ function BeatriceAgent({
     isActiveRef.current = false;
     clearSilenceTimer();
     recentSilencePromptsRef.current.clear();
-    pendingToolCallsRef.current = [];
-    pendingToolConfirmRef.current = false;
-    setShowToolConfirm(false);
 
     setIsVideoEnabled(false);
     setIsActive(false);
@@ -4308,7 +4283,7 @@ Tasks:
 3. Return a brief conversational summary of what you did.`;
 
       const response = await aiRef.current.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: WORKER_MODEL,
         contents: prompt,
         config: {
           tools: [{ functionDeclarations: GOOGLE_SERVICE_TOOLS }],
@@ -4866,27 +4841,6 @@ Tasks:
       {!isVideoEnabled && !showProfile && !showSettings && (
         <div className="shrink-0 flex justify-center px-0 pt-[15px] pb-[max(20px,env(safe-area-inset-bottom))]">
           <div className="flex w-full max-w-[430px] flex-col gap-5 px-5">
-            {showToolConfirm && (
-              <div className="flex w-full items-center gap-3 rounded-[20px] border border-lime-300/20 bg-lime-300/5 p-3 shadow-[0_10px_30px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
-                <span className="flex-1 pl-2 text-[13px] text-lime-200">
-                  {settings.agentName} wants to run an action. Go ahead?
-                </span>
-                <button
-                  type="button"
-                  onClick={executePendingTools}
-                  className="flex items-center gap-1.5 rounded-full bg-lime-300 px-4 py-2 text-[13px] font-semibold text-black transition hover:bg-lime-200"
-                >
-                  <Check className="h-4 w-4" /> Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={cancelPendingTools}
-                  className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-[13px] font-medium text-zinc-300 transition hover:bg-white/10"
-                >
-                  <X className="h-4 w-4" /> Cancel
-                </button>
-              </div>
-            )}
             <form onSubmit={sendChatMessage} className="flex w-full items-center gap-[15px] rounded-[30px] border border-white/10 bg-[#1c1c1e]/95 py-2 pl-5 pr-2 shadow-[0_20px_45px_rgba(0,0,0,0.55)] backdrop-blur-2xl">
               <button type="button" onClick={() => fileInputRef.current?.click()} className="text-[#9ca3af] hover:text-white transition" aria-label="Attach file">
                 <Paperclip className="h-[18px] w-[18px]" />
