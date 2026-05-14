@@ -2775,7 +2775,7 @@ function BeatriceAgent({
       }
 
       if (sessionRef.current) {
-        sendTextToLive(`[SYSTEM]: The user explicitly clicked the "${label}" button. This is their confirmation — proceed immediately without asking "Should I go ahead?". Start working right away and narrate out loud continuously while you do it.\n\n${prompt}\n\nGenerate this immediately with sample data included.`);
+        sendTextToLive(`${settings.userName} tapped the "${label}" button. FIRST — say "OK, I'll get that started right away" out loud. THEN immediately begin working. Do NOT ask "Should I go ahead?" — just do it. Keep talking and narrating your whole process while you work. Fill every second with speech.\n\n${prompt}\n\nGenerate this immediately with sample data included.`);
       } else {
         setActiveTaskPage(prev => prev && prev.id === tid ? { ...prev, status: 'failed', result: 'The live audio session could not start, so I could not send this task to Beatrice.' } : prev);
         setTasks(p => p.map(t => t.id === tid ? { ...t, status: 'failed', result: 'Live audio session could not start.' } : t));
@@ -3805,8 +3805,9 @@ function BeatriceAgent({
         BASE_LIVE_AGENT_PROMPT,
         historyContext,
         `CRITICAL DIRECTIVE FOR TOOL EXECUTION — YOU MUST ASK FOR CONFIRMATION FIRST: Before triggering ANY tool (drafting a contract, generating HTML, searching Drive, Maps, sending email, creating documents, creating tasks, etc.), you MUST describe what you want to do in ONE brief sentence and ask the user: "Should I go ahead?" Do NOT call the tool until the user explicitly says yes or confirms. If the user says no, cancel, wait, or is unclear, do NOT proceed. Only execute after clear approval. After confirmation, you MUST narrate your process out loud continuously while the tool runs — filler words, thoughts, muttering — like a normal office worker focused on a task.`,
-        `EXCEPTION to the confirmation rule: If you receive a [SYSTEM] message that says "The user explicitly clicked the [X] button. This is their confirmation — proceed immediately", you MUST skip asking "Should I go ahead?" and execute the tool RIGHT AWAY. The user's button click IS their confirmation. Do not ask again.`,
-        `ABSOLUTE RULE: You are forbidden from automatically executing tools. Every tool call requires explicit user confirmation — UNLESS a [SYSTEM] message explicitly states the user already confirmed by clicking a button.`,
+        `EXCEPTION to the confirmation rule: If the user message says they "tapped the [X] button" or "clicked the [X] button" or includes "Do NOT ask 'Should I go ahead?' — just do it", you MUST skip asking for confirmation and execute the tool RIGHT AWAY. A button tap IS the user's confirmation. Do not ask again.`,
+        `ABSOLUTE RULE: You are forbidden from automatically executing tools. Every tool call requires explicit user confirmation — UNLESS the user message explicitly says they already tapped a button and told you to proceed without asking.`,
+        `When a user taps a button, they want immediate action. Do not delay with questions. Just do it and narrate out loud while you work.`,
         `The user may confirm by saying: yes, yeah, sure, go ahead, do it, okay, proceed. They may cancel by saying: no, cancel, stop, wait, hold on, never mind.`,
         `ZERO SILENCE RULE — You must NEVER stop speaking. Before calling ANY tool, say out loud what you are about to do: "OK, let me pull that up for you..." Then call the tool immediately. While the tool runs, continue narrating: "Mmm, so I'm generating this now... okay, let me search... alright... Oh my gosh, wait, OK... almost done..." When the tool result comes back, narrate what happened: "All set! Here's what I got..." NEVER have a gap where you say nothing. Fill every millisecond of audio with speech, thoughts, filler words, or muttering.`,
         `If you ever find yourself about to go quiet, IMMEDIATELY say something — anything — even if it's just "hmm" or "let me think" or "OK, so..." Silence is forbidden.`,
@@ -4994,7 +4995,7 @@ Tasks:
                               await startSession();
                               await new Promise(resolve => setTimeout(resolve, 900));
                             }
-                            sendTextToLive(`[SYSTEM]: The user explicitly clicked the "${label}" button. This is their confirmation — proceed immediately without asking "Should I go ahead?". Start working right away and narrate out loud continuously while you do it.\n\n${prompt}\n\nGenerate this immediately with sample data included.`);
+                            sendTextToLive(`${settings.userName} tapped the "${label}" button. FIRST — say "OK, I'll get that started right away" out loud. THEN immediately begin working. Do NOT ask "Should I go ahead?" — just do it. Keep talking and narrating your whole process while you work. Fill every second with speech.\n\n${prompt}\n\nGenerate this immediately with sample data included.`);
                           } catch (err) {
                             console.error(err);
                           }
