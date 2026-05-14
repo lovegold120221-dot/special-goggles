@@ -5129,15 +5129,13 @@ Tasks:
                               <iframe title={msg.htmlPreviewFilename} src={msg.htmlPreviewData} className="h-[50vh] w-full bg-white" />
                             </div>
                             <div className="mt-4 grid grid-cols-2 gap-3">
-                              <a
-                                href={msg.htmlPreviewData}
-                                target="_blank"
-                                rel="noreferrer"
+                              <button
+                                onClick={() => setLivePreview({ data: msg.htmlPreviewData!, filename: msg.htmlPreviewFilename! })}
                                 className="flex items-center justify-center gap-2 rounded-xl border border-lime-300/20 bg-lime-300/10 px-3 py-3 text-[11px] font-bold uppercase tracking-widest text-lime-200 transition hover:bg-lime-300/15"
                               >
                                 <Eye className="h-4 w-4" />
                                 <span>Preview</span>
-                              </a>
+                              </button>
                               <a
                                 href={msg.htmlPreviewData}
                                 download={msg.htmlPreviewFilename}
@@ -5531,6 +5529,23 @@ Tasks:
               </div>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Full-screen live artifact preview */}
+      <AnimatePresence>
+        {livePreview && (
+          <LiveArtifactPreview
+            data={livePreview.data}
+            filename={livePreview.filename}
+            onClose={() => setLivePreview(null)}
+            onDownload={() => {
+              const a = document.createElement('a');
+              a.href = livePreview.data;
+              a.download = livePreview.filename;
+              a.click();
+            }}
+          />
         )}
       </AnimatePresence>
     </div>
